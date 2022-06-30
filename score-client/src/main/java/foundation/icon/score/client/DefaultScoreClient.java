@@ -18,7 +18,9 @@ package foundation.icon.score.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import foundation.icon.icx.KeyWallet;
 import foundation.icon.icx.Wallet;
 import foundation.icon.icx.crypto.KeystoreException;
@@ -26,11 +28,14 @@ import foundation.icon.jsonrpc.Address;
 import foundation.icon.jsonrpc.IconJsonModule;
 import foundation.icon.jsonrpc.JsonrpcClient;
 import foundation.icon.jsonrpc.SendTransactionParamSerializer;
-import foundation.icon.jsonrpc.model.*;
-import org.bouncycastle.jcajce.provider.digest.SHA3;
-import org.bouncycastle.util.encoders.Base64;
-import score.UserRevertedException;
-
+import foundation.icon.jsonrpc.model.CallData;
+import foundation.icon.jsonrpc.model.CallParam;
+import foundation.icon.jsonrpc.model.DebugTraceResult;
+import foundation.icon.jsonrpc.model.DeployData;
+import foundation.icon.jsonrpc.model.Hash;
+import foundation.icon.jsonrpc.model.SendTransactionParam;
+import foundation.icon.jsonrpc.model.TransactionParam;
+import foundation.icon.jsonrpc.model.TransactionResult;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -41,12 +46,24 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import org.bouncycastle.jcajce.provider.digest.SHA3;
+import org.bouncycastle.util.encoders.Base64;
+import score.UserRevertedException;
 
 public class DefaultScoreClient extends JsonrpcClient {
+
+    public static final long BLOCK_INTERVAL;
+    public static final long DEFAULT_RESULT_RETRY_WAIT;
+    public static final boolean DEBUG_ENABLED;
+
+    static {
+        BLOCK_INTERVAL = Long.parseLong(System.getProperty("BLOCK_INTERVAL", "100"));
+        DEFAULT_RESULT_RETRY_WAIT = Long.parseLong(System.getProperty("DEFAULT_RESULT_RETRY_WAIT", "100"));
+        DEBUG_ENABLED = Boolean.parseBoolean(System.getProperty("DEBUG_ENABLED", "True"));
+    }
+
     public static final Address ZERO_ADDRESS = new Address("cx0000000000000000000000000000000000000000");
-    public static final BigInteger DEFAULT_STEP_LIMIT = new BigInteger("9502f900",16);
-    public static final long BLOCK_INTERVAL = 1000;
-    public static final long DEFAULT_RESULT_RETRY_WAIT = 1000;
+    public static final BigInteger DEFAULT_STEP_LIMIT = new BigInteger("9502f900", 16);
     public static final long DEFAULT_RESULT_TIMEOUT = 10000;
 
     protected final BigInteger nid;
@@ -84,14 +101,17 @@ public class DefaultScoreClient extends JsonrpcClient {
         client.mapper().setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
 
-    public static DefaultScoreClient _deploy(String url, String nid, String keyStorePath, String keyStorePassword, String scoreFilePath, Map<String, Object> params) {
+    public static DefaultScoreClient _deploy(String url, String nid, String keyStorePath, String keyStorePassword,
+            String scoreFilePath, Map<String, Object> params) {
         return _deploy(url, nid(nid), wallet(keyStorePath, keyStorePassword), scoreFilePath, params);
     }
 
-    public static DefaultScoreClient _deploy(String url, BigInteger nid, Wallet wallet, String scoreFilePath, Map<String, Object> params) {
+    public static DefaultScoreClient _deploy(String url, BigInteger nid, Wallet wallet, String scoreFilePath,
+            Map<String, Object> params) {
         JsonrpcClient client = new JsonrpcClient(url);
         initialize(client);
-        Address address = deploy(client, nid, wallet, DEFAULT_STEP_LIMIT, ZERO_ADDRESS, scoreFilePath, params, DEFAULT_RESULT_TIMEOUT);
+        Address address = deploy(client, nid, wallet, DEFAULT_STEP_LIMIT, ZERO_ADDRESS, scoreFilePath, params,
+                DEFAULT_RESULT_TIMEOUT);
         return new DefaultScoreClient(url, nid, wallet, address);
     }
 
@@ -157,6 +177,7 @@ public class DefaultScoreClient extends JsonrpcClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     static class BlockHeight {
+
         BigInteger height;
 
         public BigInteger getHeight() {
@@ -209,7 +230,7 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static String url(String prefix, Properties properties) {
-        return properties.getProperty(prefix+"url");
+        return properties.getProperty(prefix + "url");
     }
 
     public static BigInteger nid(Properties properties) {
@@ -217,7 +238,7 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static BigInteger nid(String prefix, Properties properties) {
-        return nid(properties.getProperty(prefix+"nid"));
+        return nid(properties.getProperty(prefix + "nid"));
     }
 
     public static BigInteger nid(String nid) {
@@ -233,15 +254,15 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static Wallet wallet(String prefix, Properties properties) {
-        String keyStore = properties.getProperty(prefix+"keyStore");
+        String keyStore = properties.getProperty(prefix + "keyStore");
         if (keyStore == null || keyStore.isEmpty()) {
             return null;
         }
-        String keyPassword = properties.getProperty(prefix+"keyPassword");
+        String keyPassword = properties.getProperty(prefix + "keyPassword");
         if (keyPassword == null || keyPassword.isEmpty()) {
-            String keySecret = properties.getProperty(prefix+"keySecret");
+            String keySecret = properties.getProperty(prefix + "keySecret");
             try {
-                System.out.println("using keySecret "+keySecret);
+                System.out.println("using keySecret " + keySecret);
                 keyPassword = Files.readString(Path.of(keySecret));
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -252,7 +273,7 @@ public class DefaultScoreClient extends JsonrpcClient {
 
     public static Wallet wallet(String keyStorePath, String keyStorePassword) {
         try {
-            System.out.println("load wallet "+keyStorePath);
+            System.out.println("load wallet " + keyStorePath);
             return KeyWallet.load(keyStorePassword, new File(keyStorePath));
         } catch (IOException | KeystoreException e) {
             throw new RuntimeException(e);
@@ -264,7 +285,7 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static Address address(String prefix, Properties properties) {
-        String address = properties.getProperty(prefix+"address");
+        String address = properties.getProperty(prefix + "address");
         if (address == null || address.isEmpty()) {
             return null;
         }
@@ -281,7 +302,7 @@ public class DefaultScoreClient extends JsonrpcClient {
 
     public static boolean isUpdate(String prefix, Properties properties) {
         return Boolean.parseBoolean(
-                (String)properties.getOrDefault(prefix+"isUpdate",
+                (String) properties.getOrDefault(prefix + "isUpdate",
                         Boolean.FALSE.toString()));
     }
 
@@ -290,7 +311,7 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static String scoreFilePath(String prefix, Properties properties) {
-        return properties.getProperty(prefix+"scoreFilePath");
+        return properties.getProperty(prefix + "scoreFilePath");
     }
 
     public static Map<String, Object> params(Properties properties) {
@@ -302,16 +323,16 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static Map<String, Object> params(String prefix, Properties properties, Map<String, Object> overwrite) {
-        String paramsKey = prefix+"params.";
+        String paramsKey = prefix + "params.";
         Map<String, Object> params = new HashMap<>();
-        for(Map.Entry<Object, Object> entry : properties.entrySet()) {
-            String key = ((String)entry.getKey());
+        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+            String key = ((String) entry.getKey());
             if (key.startsWith(paramsKey)) {
                 params.put(key.substring(paramsKey.length()), entry.getValue());
             }
         }
         if (overwrite != null) {
-            for(Map.Entry<String, Object> entry : overwrite.entrySet()) {
+            for (Map.Entry<String, Object> entry : overwrite.entrySet()) {
                 params.put(entry.getKey(), entry.getValue());
             }
         }
@@ -377,7 +398,8 @@ public class DefaultScoreClient extends JsonrpcClient {
             JsonrpcClient client, BigInteger nid, Wallet wallet, BigInteger stepLimit, Address address,
             BigInteger valueForPayable, String method, Map<String, Object> params,
             long timeout) {
-        SendTransactionParam tx = new SendTransactionParam(nid, address, valueForPayable, "call", callData(method, params));
+        SendTransactionParam tx = new SendTransactionParam(nid, address, valueForPayable, "call",
+                callData(method, params));
         Hash txh = sendTransaction(client, wallet, tx);
         waitBlockInterval();
         return result(client, txh, timeout);
@@ -402,11 +424,12 @@ public class DefaultScoreClient extends JsonrpcClient {
         } else {
             throw new RuntimeException("not supported score file");
         }
-        SendTransactionParam tx = new SendTransactionParam(nid, address,null,"deploy", new DeployData(contentType, content, params));
+        SendTransactionParam tx = new SendTransactionParam(nid, address, null, "deploy",
+                new DeployData(contentType, content, params));
         Hash txh = sendTransaction(client, wallet, tx);
         waitBlockInterval();
         TransactionResult txr = result(client, txh, timeout);
-        System.out.println("SCORE address: "+txr.getScoreAddress());
+        System.out.println("SCORE address: " + txr.getScoreAddress());
         return txr.getScoreAddress();
     }
 
@@ -425,10 +448,11 @@ public class DefaultScoreClient extends JsonrpcClient {
     }
 
     public static TransactionResult result(JsonrpcClient client, Hash txh, long timeout) {
+        System.out.println("wait for " + txh);
         Map<String, Object> params = Map.of("txHash", txh);
         long etime = System.currentTimeMillis() + timeout;
         TransactionResult txr = null;
-        while(txr == null) {
+        while (txr == null) {
             try {
                 txr = client.request(TransactionResult.class, "icx_getTransactionResult", params);
             } catch (JsonrpcClient.JsonrpcError e) {
@@ -440,7 +464,7 @@ public class DefaultScoreClient extends JsonrpcClient {
                     }
                     try {
                         Thread.sleep(DEFAULT_RESULT_RETRY_WAIT);
-                        System.out.println("wait for "+txh);
+                        System.out.println("wait for " + txh);
                     } catch (InterruptedException ie) {
                         ie.printStackTrace();
                     }
@@ -450,6 +474,7 @@ public class DefaultScoreClient extends JsonrpcClient {
             }
         }
         if (!BigInteger.ONE.equals(txr.getStatus())) {
+            debug(client.endpoint() + "d", txh);
             TransactionResult.Failure failure = txr.getFailure();
             int revertCode = failure.getCode().intValue();
             String revertMessage = failure.getMessage();
@@ -464,6 +489,24 @@ public class DefaultScoreClient extends JsonrpcClient {
 
     public static BigInteger balance(JsonrpcClient client, Address address) {
         return client.request(BigInteger.class, "icx_getBalance", Map.of("address", address));
+    }
+
+    public static void debug(String url, Hash txh) {
+        if (!DEBUG_ENABLED) {
+            return;
+        }
+        Map<String, Object> params = Map.of("txHash", txh);
+        try {
+            JsonrpcClient client = new JsonrpcClient(url);
+            DebugTraceResult txr = client.request(DebugTraceResult.class, "debug_getTrace", params);
+
+            ObjectMapper mapper = new ObjectMapper();
+            System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(txr));
+
+        } catch (JsonrpcError | JsonProcessingException e) {
+            e.printStackTrace();
+        }
+
     }
 
     public static <T> T lastBlock(JsonrpcClient client, Class<T> blockType) {
